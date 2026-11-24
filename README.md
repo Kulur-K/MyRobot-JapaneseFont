@@ -50,7 +50,7 @@
 ## リリースの作り方
 
 1. ビルドした `MyRobotJP.dll` を `dist/` に置き、`release-notes/vX.Y.Z.md` を書きます。
-2. `vX.Y.Z` タグを push すると、GitHub Actions が zip を作って Release に添付します。
+2. `vX.Y.Z` タグを push するか、Actions の Release ワークフローを手動実行 (tag を入力) すると、zip を作って Release に添付します。
 
 ## ライセンス
 

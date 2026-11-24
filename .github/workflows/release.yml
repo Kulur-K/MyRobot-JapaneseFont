@@ -3,6 +3,11 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.2.0)"
+        required: true
 
 permissions:
   contents: write
@@ -19,7 +24,7 @@ jobs:
       - name: Build zips
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ inputs.tag || github.ref_name }}"
           mkdir -p out mod/BepInEx/plugins/MyRobotJP/fonts full
           cp dist/MyRobotJP.dll mod/BepInEx/plugins/MyRobotJP/
           cp fonts/* mod/BepInEx/plugins/MyRobotJP/fonts/
@@ -35,7 +40,8 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          NOTES="release-notes/${GITHUB_REF_NAME}.md"
+          NOTES="release-notes/${TAG}.md"
           [ -f "$NOTES" ] || NOTES=/dev/null
-          gh release create "$GITHUB_REF_NAME" out/*.zip --title "$GITHUB_REF_NAME" --notes-file "$NOTES"
+          gh release create "$TAG" out/*.zip --title "$TAG" --notes-file "$NOTES" --target "$GITHUB_SHA"
