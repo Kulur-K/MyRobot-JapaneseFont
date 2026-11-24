@@ -18,7 +18,7 @@ namespace MyRobotJP
     {
         public const string Guid = "myrobot.japanesefont";
         public const string Name = "MyRobot Japanese Font";
-        public const string Version = "1.1.0";
+        public const string Version = "1.2.0";
 
         internal static ManualLogSource Log;
         internal static TMP_FontAsset JpFont;
@@ -30,9 +30,18 @@ namespace MyRobotJP
         internal static ConfigEntry<int> AtlasSize;
         internal static ConfigEntry<bool> ReplaceAllTexts;
         internal static ConfigEntry<bool> AddAsFallback;
+        internal static ConfigEntry<bool> DebugLog;
+
+        private static string GetPath(Transform t)
+        {
+            var path = t.name;
+            while ((t = t.parent) != null) path = t.name + "/" + path;
+            return path;
+        }
 
         // Original font of each text we changed, so we can restore it when leaving Japanese.
         private static readonly Dictionary<int, TMP_FontAsset> OriginalFonts = new Dictionary<int, TMP_FontAsset>();
+        private static readonly Dictionary<int, Material> OriginalMaterials = new Dictionary<int, Material>();
         private static readonly HashSet<int> PatchedFallbackOwners = new HashSet<int>();
 
         private void Awake()
@@ -49,6 +58,9 @@ namespace MyRobotJP
                 "日本語のとき、ゲーム内のすべての文字をこのフォントに置き換える");
             AddAsFallback = Config.Bind("Behavior", "AddAsFallback", true,
                 "どの言語でも、元のフォントに無い文字(日本語など)をこのフォントで表示する");
+
+            DebugLog = Config.Bind("Debug", "DebugLog", false,
+                "フォントを置き換えた文字の情報をログに出す(不具合調査用)");
 
             if (!LoadFont()) return;
 
@@ -109,6 +121,40 @@ namespace MyRobotJP
             return true;
         }
 
+        private static bool materialAdopted;
+
+        // The game's own Japanese font asset uses a material whose shader works on every canvas
+        // (including the in-game monitors). Our runtime font gets a default material that doesn't,
+        // so copy the game's material onto our atlas once.
+        internal static void AdoptMaterialFrom(TMP_FontAsset gameFont)
+        {
+            if (materialAdopted || JpFont == null || gameFont == null || gameFont == JpFont) return;
+            var src = gameFont.material;
+            if (src == null) return;
+            materialAdopted = true;
+            try
+            {
+                var mat = TMP_MaterialManager.GetFallbackMaterial(src, JpFont.material);
+                if (mat == null) return;
+                mat.name = JpFont.name + " Material";
+                JpFont.material = mat;
+                foreach (var extra in ExtraFonts)
+                {
+                    var em = TMP_MaterialManager.GetFallbackMaterial(src, extra.material);
+                    if (em != null) extra.material = em;
+                }
+                Log.LogInfo($"Using shader '{src.shader.name}' from game font '{gameFont.name}'");
+            }
+            catch (Exception e) { Log.LogError("AdoptMaterialFrom failed: " + e); }
+        }
+
+        internal static void EnsureMaterialAdopted()
+        {
+            if (materialAdopted) return;
+            var lex = Manager<Lexicon>.main;
+            if (lex != null) lex.GetFontForSystemLanguage(SystemLanguage.Japanese); // triggers the postfix
+        }
+
         internal static bool IsJapanese()
         {
             var lex = Manager<Lexicon>.main;
@@ -147,20 +193,39 @@ namespace MyRobotJP
             int id = text.GetInstanceID();
             if (IsJapanese())
             {
+                EnsureMaterialAdopted();
                 var current = text.font;
                 if (current == JpFont) return;
-                if (!OriginalFonts.ContainsKey(id)) OriginalFonts[id] = current;
+                if (current == null) return;
+                var originalMat = text.fontSharedMaterial;
+                if (!OriginalFonts.ContainsKey(id)) { OriginalFonts[id] = current; OriginalMaterials[id] = originalMat; }
                 text.font = JpFont;
+                // Keep the game's own shader and settings (outline, glow, screen effects...) by
+                // building a material from the original one with our atlas, like TMP does for fallbacks.
+                if (originalMat != null && JpFont.material != null && originalMat.shader != JpFont.material.shader)
+                {
+                    try { text.fontSharedMaterial = TMP_MaterialManager.GetFallbackMaterial(originalMat, JpFont.material); }
+                    catch (Exception e) { Log.LogDebug("Material copy failed for " + text.name + ": " + e.Message); }
+                }
+                if (DebugLog.Value)
+                    Log.LogInfo($"[Replace] {GetPath(text.transform)} font={current.name} shader={(originalMat ? originalMat.shader.name : "null")} overflow={text.overflowMode} size={text.fontSize} auto={text.enableAutoSizing} rect={text.rectTransform.rect.size}");
             }
             else if (OriginalFonts.TryGetValue(id, out var original))
             {
                 OriginalFonts.Remove(id);
-                if (text.font == JpFont && original != null) text.font = original;
+                OriginalMaterials.TryGetValue(id, out var originalMat);
+                OriginalMaterials.Remove(id);
+                if (text.font == JpFont && original != null)
+                {
+                    text.font = original;
+                    if (originalMat != null) text.fontSharedMaterial = originalMat;
+                }
             }
         }
 
         internal static void ApplyAll()
         {
+            EnsureMaterialAdopted();
             ApplyFallbacks();
             foreach (var t in Resources.FindObjectsOfTypeAll<TMP_Text>())
             {
@@ -177,7 +242,10 @@ namespace MyRobotJP
         private static void Postfix(SystemLanguage systemLanguage, ref TMP_FontAsset __result)
         {
             if (systemLanguage == SystemLanguage.Japanese && Plugin.JpFont != null)
+            {
+                Plugin.AdoptMaterialFrom(__result);
                 __result = Plugin.JpFont;
+            }
         }
     }
 

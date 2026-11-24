@@ -33,10 +33,11 @@
 | `ExtraFallbackFonts` | 予備フォント (カンマ区切り、空欄で無効) |
 | `ReplaceAllTextsInJapanese` | 日本語のとき、すべての文字をメインフォントにする |
 | `AddAsFallback` | 他の言語でも、元のフォントに無い文字をこのフォントで表示する |
+| `DebugLog` | 置き換えた文字の情報をログに出す (不具合調査用) |
 
 ## しくみ
 
-ゲームの `Lexicon.GetFontForSystemLanguage` (言語ごとにフォントを選ぶ処理) を Harmony でフックし、日本語のときに同梱フォントを返します。フォントは起動時に `TMP_FontAsset.CreateFontAsset` で .otf から直接作るため、AssetBundle は不要です。
+ゲームの `Lexicon.GetFontForSystemLanguage` (言語ごとにフォントを選ぶ処理) を Harmony でフックし、日本語のときに同梱フォントを返します。フォントは起動時に `TMP_FontAsset.CreateFontAsset` で .otf から直接作るため、AssetBundle は不要です。描画用のマテリアルはゲーム本来の日本語フォントのものを引き継ぐので、ゲーム内モニターなど特殊な画面でも表示されます。
 
 ## ビルド
 
