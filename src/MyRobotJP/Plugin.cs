@@ -1,0 +1,204 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using BepInEx;
+using BepInEx.Configuration;
+using BepInEx.Logging;
+using HarmonyLib;
+using TMPro;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using UnityEngine.TextCore.LowLevel;
+
+namespace MyRobotJP
+{
+    [BepInPlugin(Guid, Name, Version)]
+    [BepInProcess("Robot.exe")]
+    public class Plugin : BaseUnityPlugin
+    {
+        public const string Guid = "myrobot.japanesefont";
+        public const string Name = "MyRobot Japanese Font";
+        public const string Version = "1.1.0";
+
+        internal static ManualLogSource Log;
+        internal static TMP_FontAsset JpFont;
+
+        internal static ConfigEntry<string> FontFile;
+        internal static ConfigEntry<string> ExtraFallbackFonts;
+        internal static readonly List<TMP_FontAsset> ExtraFonts = new List<TMP_FontAsset>();
+        internal static ConfigEntry<int> SamplingPointSize;
+        internal static ConfigEntry<int> AtlasSize;
+        internal static ConfigEntry<bool> ReplaceAllTexts;
+        internal static ConfigEntry<bool> AddAsFallback;
+
+        // Original font of each text we changed, so we can restore it when leaving Japanese.
+        private static readonly Dictionary<int, TMP_FontAsset> OriginalFonts = new Dictionary<int, TMP_FontAsset>();
+        private static readonly HashSet<int> PatchedFallbackOwners = new HashSet<int>();
+
+        private void Awake()
+        {
+            Log = Logger;
+            FontFile = Config.Bind("Font", "FontFile", "Corporate-Logo-Rounded-Bold-ver3.otf",
+                "fonts フォルダ内のフォントファイル名 (.ttf / .otf)");
+            ExtraFallbackFonts = Config.Bind("Font", "ExtraFallbackFonts", "NotoSansJP-Bold.otf",
+                "メインのフォントに無い文字(JIS第3・第4水準の漢字など)を表示する予備フォント。fonts フォルダ内のファイル名をカンマ区切りで指定。空欄で無効");
+            SamplingPointSize = Config.Bind("Font", "SamplingPointSize", 90,
+                "フォントアトラスに描き込むときのサイズ。大きいほどきれいだがメモリを使う");
+            AtlasSize = Config.Bind("Font", "AtlasSize", 2048, "フォントアトラスの幅と高さ (1024 / 2048 / 4096)");
+            ReplaceAllTexts = Config.Bind("Behavior", "ReplaceAllTextsInJapanese", true,
+                "日本語のとき、ゲーム内のすべての文字をこのフォントに置き換える");
+            AddAsFallback = Config.Bind("Behavior", "AddAsFallback", true,
+                "どの言語でも、元のフォントに無い文字(日本語など)をこのフォントで表示する");
+
+            if (!LoadFont()) return;
+
+            new Harmony(Guid).PatchAll(typeof(Plugin).Assembly);
+            SceneManager.sceneLoaded += (_, __) => ApplyAll();
+            Log.LogInfo($"{Name} {Version} loaded");
+        }
+
+        private string FontsDir => Path.Combine(Path.GetDirectoryName(Info.Location) ?? Paths.PluginPath, "fonts");
+
+        private static TMP_FontAsset CreateFont(string path)
+        {
+            if (!File.Exists(path))
+            {
+                Log.LogError("Font file not found: " + path);
+                return null;
+            }
+            TMP_FontAsset fa = null;
+            try
+            {
+                int size = Mathf.Clamp(AtlasSize.Value, 512, 8192);
+                fa = TMP_FontAsset.CreateFontAsset(path, 0, SamplingPointSize.Value, 9,
+                    GlyphRenderMode.SDFAA, size, size);
+            }
+            catch (Exception e)
+            {
+                Log.LogError("Failed to create font asset from " + path + ": " + e);
+                return null;
+            }
+            if (fa == null)
+            {
+                Log.LogError("TMP_FontAsset.CreateFontAsset returned null for " + path);
+                return null;
+            }
+            fa.name = "MyRobotJP " + Path.GetFileNameWithoutExtension(path);
+            fa.atlasPopulationMode = AtlasPopulationMode.Dynamic;
+            fa.isMultiAtlasTexturesEnabled = true;
+            DontDestroyOnLoad(fa);
+            Log.LogInfo("Loaded font: " + path);
+            return fa;
+        }
+
+        private bool LoadFont()
+        {
+            JpFont = CreateFont(Path.Combine(FontsDir, FontFile.Value));
+            if (JpFont == null) return false;
+
+            var table = JpFont.fallbackFontAssetTable ?? (JpFont.fallbackFontAssetTable = new List<TMP_FontAsset>());
+            foreach (var raw in (ExtraFallbackFonts.Value ?? "").Split(','))
+            {
+                var file = raw.Trim();
+                if (file.Length == 0) continue;
+                var extra = CreateFont(Path.Combine(FontsDir, file));
+                if (extra == null) continue;
+                ExtraFonts.Add(extra);
+                table.Add(extra);
+            }
+            return true;
+        }
+
+        internal static bool IsJapanese()
+        {
+            var lex = Manager<Lexicon>.main;
+            return lex != null && lex.currentSystemLanguage == SystemLanguage.Japanese;
+        }
+
+        internal static void ApplyFallbacks()
+        {
+            if (!AddAsFallback.Value || JpFont == null) return;
+            try
+            {
+                var global = TMP_Settings.fallbackFontAssets;
+                if (global != null)
+                {
+                    if (!global.Contains(JpFont)) global.Add(JpFont);
+                    foreach (var extra in ExtraFonts)
+                        if (!global.Contains(extra)) global.Add(extra);
+                }
+            }
+            catch (Exception e) { Log.LogDebug("TMP_Settings unavailable: " + e.Message); }
+
+            foreach (var fa in Resources.FindObjectsOfTypeAll<TMP_FontAsset>())
+            {
+                if (fa == null || fa == JpFont || ExtraFonts.Contains(fa)) continue;
+                if (!PatchedFallbackOwners.Add(fa.GetInstanceID())) continue;
+                var table = fa.fallbackFontAssetTable ?? (fa.fallbackFontAssetTable = new List<TMP_FontAsset>());
+                if (!table.Contains(JpFont)) table.Add(JpFont);
+                foreach (var extra in ExtraFonts)
+                    if (!table.Contains(extra)) table.Add(extra);
+            }
+        }
+
+        internal static void ApplyTo(TMP_Text text)
+        {
+            if (text == null || JpFont == null || !ReplaceAllTexts.Value) return;
+            int id = text.GetInstanceID();
+            if (IsJapanese())
+            {
+                var current = text.font;
+                if (current == JpFont) return;
+                if (!OriginalFonts.ContainsKey(id)) OriginalFonts[id] = current;
+                text.font = JpFont;
+            }
+            else if (OriginalFonts.TryGetValue(id, out var original))
+            {
+                OriginalFonts.Remove(id);
+                if (text.font == JpFont && original != null) text.font = original;
+            }
+        }
+
+        internal static void ApplyAll()
+        {
+            ApplyFallbacks();
+            foreach (var t in Resources.FindObjectsOfTypeAll<TMP_Text>())
+            {
+                if (t == null || !t.gameObject.scene.IsValid()) continue; // skip prefabs/assets
+                ApplyTo(t);
+            }
+        }
+    }
+
+    // The game asks Lexicon which font to use for the current language. Answer with ours for Japanese.
+    [HarmonyPatch(typeof(Lexicon), nameof(Lexicon.GetFontForSystemLanguage))]
+    internal static class GetFontPatch
+    {
+        private static void Postfix(SystemLanguage systemLanguage, ref TMP_FontAsset __result)
+        {
+            if (systemLanguage == SystemLanguage.Japanese && Plugin.JpFont != null)
+                __result = Plugin.JpFont;
+        }
+    }
+
+    [HarmonyPatch(typeof(Lexicon), "AssignLanguage")]
+    internal static class AssignLanguagePatch
+    {
+        private static void Postfix()
+        {
+            try { Plugin.ApplyAll(); } catch (Exception e) { Plugin.Log.LogError(e); }
+        }
+    }
+
+    [HarmonyPatch(typeof(TextMeshProUGUI), "OnEnable")]
+    internal static class UGUIEnablePatch
+    {
+        private static void Postfix(TextMeshProUGUI __instance) => Plugin.ApplyTo(__instance);
+    }
+
+    [HarmonyPatch(typeof(TextMeshPro), "OnEnable")]
+    internal static class WorldEnablePatch
+    {
+        private static void Postfix(TextMeshPro __instance) => Plugin.ApplyTo(__instance);
+    }
+}
