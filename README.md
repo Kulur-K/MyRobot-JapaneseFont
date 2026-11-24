@@ -47,6 +47,11 @@
 2. `lib/BepInEx/` に BepInEx 5 の `BepInEx/core/` 内の DLL をコピーします。
 3. `dotnet build src/MyRobotJP -c Release`
 
+## リリースの作り方
+
+1. ビルドした `MyRobotJP.dll` を `dist/` に置き、`release-notes/vX.Y.Z.md` を書きます。
+2. `vX.Y.Z` タグを push すると、GitHub Actions が zip を作って Release に添付します。
+
 ## ライセンス
 
 - ソースコード: MIT License ([LICENSE](LICENSE))

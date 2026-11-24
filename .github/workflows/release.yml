@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  BEPINEX_URL: https://github.com/BepInEx/BepInEx/releases/download/v5.4.23.2/BepInEx_win_x64_5.4.23.2.zip
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build zips
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p out mod/BepInEx/plugins/MyRobotJP/fonts full
+          cp dist/MyRobotJP.dll mod/BepInEx/plugins/MyRobotJP/
+          cp fonts/* mod/BepInEx/plugins/MyRobotJP/fonts/
+          cp dist/README_MyRobotJP.txt mod/
+          curl -sSLf -o bepinex.zip "$BEPINEX_URL"
+          (cd full && unzip -q ../bepinex.zip)
+          cp -r mod/. full/
+          curl -sSLf -o full/BepInEx-LICENSE.txt https://raw.githubusercontent.com/BepInEx/BepInEx/v5.4.23.2/LICENSE
+          (cd mod && zip -qr "../out/MyRobotJP_${TAG}.zip" .)
+          (cd full && zip -qr "../out/MyRobotJP_${TAG}_with_BepInEx.zip" .)
+          ls -la out
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES="release-notes/${GITHUB_REF_NAME}.md"
+          [ -f "$NOTES" ] || NOTES=/dev/null
+          gh release create "$GITHUB_REF_NAME" out/*.zip --title "$GITHUB_REF_NAME" --notes-file "$NOTES"
