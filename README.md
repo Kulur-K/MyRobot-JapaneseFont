@@ -1,6 +1,7 @@
 # MyRobot 日本語フォントMOD
 
 [MyRobot](https://store.steampowered.com/app/3597510/MyRobot/) で日本語表示にしたとき、文字が「□」になる問題を直す BepInEx 用 MOD です。
+<img width="1832" height="2290" alt="compare_all" src="https://github.com/user-attachments/assets/bcb9eca2-489f-40fc-a01f-0c3b5c60d1d7" />
 
 - メインフォント: コーポレート・ロゴ（ラウンド）Bold ver3
 - 予備フォント: Noto Sans JP Bold (メインフォントに無い JIS 第3・第4水準の漢字など。生成AIの会話向け)
